@@ -9,6 +9,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,11 +78,17 @@ static int child_func(void *_arg)
     longjmp(*arg->env, 1);
 }
 
-static int clone_parent(jmp_buf *env, int flags) __attribute__((noinline));
-static int clone_parent(jmp_buf *env, int flags)
+static int clone_parent(jmp_buf *env, int flags, bool delay_ipc_unshare) __attribute__((noinline));
+static int clone_parent(jmp_buf * env, int flags, bool delay_ipc_unshare)
 {
 	struct clone_arg ca;
 	int		 child;
+
+	// Don't clone into NEWIPC at the same time as cloning into NEWUSER.
+	// This way we can ensure that NEWIPC namespace belongs to the root in new user namespace.
+	if (delay_ipc_unshare) {
+		flags &= ~CLONE_NEWIPC;
+	}
 
 	ca.env = env;
 	child  = clone(child_func, ca.stack_ptr, CLONE_PARENT | SIGCHLD | flags,
@@ -230,7 +237,7 @@ static void update_process_gidmap(int pid, uint8_t is_setgroup, char *map, int m
 
 
 static void start_child(int pipenum, jmp_buf *env, int syncpipe[2],
-		 struct nsenter_config *config)
+		 struct nsenter_config *config, bool delay_ipc_unshare)
 {
 	int     len;
 	int     childpid;
@@ -240,7 +247,7 @@ static void start_child(int pipenum, jmp_buf *env, int syncpipe[2],
 	// We must fork to actually enter the PID namespace, use CLONE_PARENT
 	// so the child can have the right parent, and we don't need to forward
 	// the child's exit code or resend its death signal.
-	childpid = clone_parent(env, config->cloneflags);
+	childpid = clone_parent(env, config->cloneflags, delay_ipc_unshare);
 	if (childpid < 0) {
 		pr_perror("Unable to fork");
 		exit(1);
@@ -402,6 +409,9 @@ void nsexec(void)
 		pr_perror("Missing clone_flags");
 		exit(1);
 	}
+
+	bool delay_ipc_unshare = ((config.cloneflags & CLONE_NEWUSER) == CLONE_NEWUSER)
+	    && ((config.cloneflags & CLONE_NEWIPC) == CLONE_NEWIPC);
 	// prepare sync pipe between parent and child. We need this to let the
 	// child know that the parent has finished setting up
 	if (pipe(syncpipe) != 0) {
@@ -443,6 +453,13 @@ void nsexec(void)
 			exit(1);
 		}
 
+		if (delay_ipc_unshare) {
+			if (unshare(CLONE_NEWIPC)) {
+				pr_perror("Unable to unshare IPC namespace");
+				exit(1);
+			}
+		}
+
 		if (consolefd != -1) {
 			if (ioctl(consolefd, TIOCSCTTY, 0) == -1) {
 				pr_perror("ioctl TIOCSCTTY failed");
@@ -467,5 +484,5 @@ void nsexec(void)
 	}
 
 	// Parent
-	start_child(pipenum, &env, syncpipe, &config);
+	start_child(pipenum, &env, syncpipe, &config, delay_ipc_unshare);
 }
