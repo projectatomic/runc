@@ -309,6 +309,8 @@ _runc_kill() {
 	local boolean_options="
 	   --help
 	   -h
+          --all
+          -a
 	"
 
 	case "$prev" in
