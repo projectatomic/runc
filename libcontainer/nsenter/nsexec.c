@@ -639,7 +639,12 @@ void nsexec(void)
 			 * some old kernel versions where clone(CLONE_PARENT | CLONE_NEWPID)
 			 * was broken, so we'll just do it the long way anyway.
 			 */
-			if (unshare(config.cloneflags) < 0)
+			uint32_t apply_cloneflags = config.cloneflags;
+			if ((config.cloneflags & CLONE_NEWUSER) && (config.cloneflags & CLONE_NEWIPC)) {
+				apply_cloneflags &= ~CLONE_NEWIPC;
+			}
+
+			if (unshare(apply_cloneflags) < 0)
 				bail("failed to unshare namespaces");
 
 			/*
@@ -734,6 +739,11 @@ void nsexec(void)
 
 			if (setgroups(0, NULL) < 0)
 				bail("setgroups failed");
+
+			if ((config.cloneflags & CLONE_NEWUSER) && (config.cloneflags & CLONE_NEWIPC)) {
+				if (unshare(CLONE_NEWIPC) < 0)
+					bail("unshare ipc failed");
+			}
 
 			if (consolefd != -1) {
 				if (ioctl(consolefd, TIOCSCTTY, 0) < 0)
