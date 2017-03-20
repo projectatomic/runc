@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	systemdDbus "github.com/coreos/go-systemd/dbus"
 	systemdUtil "github.com/coreos/go-systemd/util"
 	"github.com/godbus/dbus"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/opencontainers/runc/libcontainer/cgroups/fs"
 	"github.com/opencontainers/runc/libcontainer/configs"
-	"github.com/Sirupsen/logrus"
 )
 
 type Manager struct {
@@ -285,7 +285,7 @@ func (m *Manager) Apply(pid int) error {
 
 	if c.Resources.Memory != 0 {
 		properties = append(properties,
-			newProp("MemoryLimit", uint64(c.Resources.Memory)))
+			newProp("MemoryLimit", c.Resources.Memory))
 	}
 
 	if c.Resources.CpuShares != 0 {
@@ -295,7 +295,7 @@ func (m *Manager) Apply(pid int) error {
 
 	// cpu.cfs_quota_us and cpu.cfs_period_us are controlled by systemd.
 	if c.Resources.CpuQuota != 0 && c.Resources.CpuPeriod != 0 {
-		cpuQuotaPerSecUSec := c.Resources.CpuQuota*1000000 / c.Resources.CpuPeriod
+		cpuQuotaPerSecUSec := uint64(c.Resources.CpuQuota*1000000) / c.Resources.CpuPeriod
 		// systemd converts CPUQuotaPerSecUSec (microseconds per CPU second) to CPUQuota
 		// (integer percentage of CPU) internally.  This means that if a fractional percent of
 		// CPU is indicated by Resources.CpuQuota, we need to round up to the nearest
