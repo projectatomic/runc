@@ -6,7 +6,7 @@
 
 # EXAMPLE
 Where the given root is specified via the global option "--root"
-(default: "/run/runc").
+(default: "/run/runc-ctrs").
 
 To list containers created via the default "--root":
        # runc list

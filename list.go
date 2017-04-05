@@ -46,7 +46,7 @@ var listCommand = cli.Command{
 	ArgsUsage: `
 
 Where the given root is specified via the global option "--root"
-(default: "/run/runc").
+(default: "/run/runc-ctrs").
 
 EXAMPLE 1:
 To list containers created via the default "--root":
