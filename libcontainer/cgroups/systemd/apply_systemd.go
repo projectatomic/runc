@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	systemdDbus "github.com/coreos/go-systemd/dbus"
 	systemdUtil "github.com/coreos/go-systemd/util"
@@ -70,11 +69,8 @@ const (
 )
 
 var (
-	connLock                        sync.Mutex
-	theConn                         *systemdDbus.Conn
-	hasStartTransientUnit           bool
-	hasTransientDefaultDependencies bool
-	hasDelegate                     bool
+	connLock sync.Mutex
+	theConn  *systemdDbus.Conn
 )
 
 func newProp(name string, units interface{}) systemdDbus.Property {
@@ -85,84 +81,7 @@ func newProp(name string, units interface{}) systemdDbus.Property {
 }
 
 func UseSystemd() bool {
-	if !systemdUtil.IsRunningSystemd() {
-		return false
-	}
-
-	connLock.Lock()
-	defer connLock.Unlock()
-
-	if theConn == nil {
-		var err error
-		theConn, err = systemdDbus.New()
-		if err != nil {
-			return false
-		}
-
-		// Assume we have StartTransientUnit
-		hasStartTransientUnit = true
-
-		// But if we get UnknownMethod error we don't
-		if _, err := theConn.StartTransientUnit("test.scope", "invalid", nil, nil); err != nil {
-			if dbusError, ok := err.(dbus.Error); ok {
-				if dbusError.Name == "org.freedesktop.DBus.Error.UnknownMethod" {
-					hasStartTransientUnit = false
-					return hasStartTransientUnit
-				}
-			}
-		}
-
-		// Ensure the scope name we use doesn't exist. Use the Pid to
-		// avoid collisions between multiple libcontainer users on a
-		// single host.
-		scope := fmt.Sprintf("libcontainer-%d-systemd-test-default-dependencies.scope", os.Getpid())
-		testScopeExists := true
-		for i := 0; i <= testScopeWait; i++ {
-			if _, err := theConn.StopUnit(scope, "replace", nil); err != nil {
-				if dbusError, ok := err.(dbus.Error); ok {
-					if strings.Contains(dbusError.Name, "org.freedesktop.systemd1.NoSuchUnit") {
-						testScopeExists = false
-						break
-					}
-				}
-			}
-			time.Sleep(time.Millisecond)
-		}
-
-		// Bail out if we can't kill this scope without testing for DefaultDependencies
-		if testScopeExists {
-			return hasStartTransientUnit
-		}
-
-		// Assume StartTransientUnit on a scope allows DefaultDependencies
-		hasTransientDefaultDependencies = true
-		ddf := newProp("DefaultDependencies", false)
-		if _, err := theConn.StartTransientUnit(scope, "replace", []systemdDbus.Property{ddf}, nil); err != nil {
-			if dbusError, ok := err.(dbus.Error); ok {
-				if strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.PropertyReadOnly") {
-					hasTransientDefaultDependencies = false
-				}
-			}
-		}
-
-		// Not critical because of the stop unit logic above.
-		theConn.StopUnit(scope, "replace", nil)
-
-		// Assume StartTransientUnit on a scope allows Delegate
-		hasDelegate = true
-		dl := newProp("Delegate", true)
-		if _, err := theConn.StartTransientUnit(scope, "replace", []systemdDbus.Property{dl}, nil); err != nil {
-			if dbusError, ok := err.(dbus.Error); ok {
-				if strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.PropertyReadOnly") {
-					hasDelegate = false
-				}
-			}
-		}
-
-		// Not critical because of the stop unit logic above.
-		theConn.StopUnit(scope, "replace", nil)
-	}
-	return hasStartTransientUnit
+	return systemdUtil.IsRunningSystemd()
 }
 
 func (m *Manager) Apply(pid int) error {
@@ -200,10 +119,8 @@ func (m *Manager) Apply(pid int) error {
 		newProp("PIDs", []uint32{uint32(pid)}),
 	)
 
-	if hasDelegate {
-		// This is only supported on systemd versions 218 and above.
-		properties = append(properties, newProp("Delegate", true))
-	}
+	// This is only supported on systemd versions 218 and above.
+	properties = append(properties, newProp("Delegate", true))
 
 	// Always enable accounting, this gets us the same behaviour as the fs implementation,
 	// plus the kernel has some problems with joining the memory cgroup at a later time.
@@ -212,10 +129,7 @@ func (m *Manager) Apply(pid int) error {
 		newProp("CPUAccounting", true),
 		newProp("BlockIOAccounting", true))
 
-	if hasTransientDefaultDependencies {
-		properties = append(properties,
-			newProp("DefaultDependencies", false))
-	}
+	properties = append(properties, newProp("DefaultDependencies", false))
 
 	if c.Resources.Memory != 0 {
 		properties = append(properties,
@@ -238,6 +152,12 @@ func (m *Manager) Apply(pid int) error {
 		if err := setKernelMemory(c); err != nil {
 			return err
 		}
+	}
+
+	var err error
+	theConn, err = systemdDbus.New()
+	if err != nil {
+		return err
 	}
 
 	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, nil); err != nil {
