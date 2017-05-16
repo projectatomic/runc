@@ -190,6 +190,14 @@ func (m *Manager) Destroy() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if theConn == nil {
+		var err error
+		theConn, err = systemdDbus.New()
+		if err != nil {
+			return err
+		}
+	}
 	theConn.StopUnit(getUnitName(m.Cgroups), "replace", nil)
 	if err := cgroups.RemovePaths(m.Paths); err != nil {
 		return err
