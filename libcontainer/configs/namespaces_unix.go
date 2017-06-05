@@ -81,9 +81,6 @@ type Namespace struct {
 }
 
 func (n *Namespace) GetPath(pid int) string {
-	if n.Path != "" {
-		return n.Path
-	}
 	return fmt.Sprintf("/proc/%d/ns/%s", pid, NsName(n.Type))
 }
 
