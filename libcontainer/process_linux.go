@@ -287,9 +287,6 @@ loop:
 		}
 		switch procSync.Type {
 		case procReady:
-			if err := p.manager.Set(p.config.Config); err != nil {
-				return newSystemErrorWithCause(err, "setting cgroup config for ready process")
-			}
 			// set oom_score_adj
 			if err := setOomScoreAdj(p.config.Config.OomScoreAdj, p.pid()); err != nil {
 				return newSystemErrorWithCause(err, "setting oom score for ready process")
@@ -301,6 +298,10 @@ loop:
 			}
 			// call prestart hooks
 			if !p.config.Config.Namespaces.Contains(configs.NEWNS) {
+				// Setup cgroup before prestart hook, so that the prestart hook could apply cgroup permissions.
+				if err := p.manager.Set(p.config.Config); err != nil {
+					return newSystemErrorWithCause(err, "setting cgroup config for ready process")
+				}
 				if p.config.Config.Hooks != nil {
 					s := configs.HookState{
 						Version: p.container.config.Version,
@@ -321,6 +322,10 @@ loop:
 			}
 			sentRun = true
 		case procHooks:
+			// Setup cgroup before prestart hook, so that the prestart hook could apply cgroup permissions.
+			if err := p.manager.Set(p.config.Config); err != nil {
+				return newSystemErrorWithCause(err, "setting cgroup config for procHooks process")
+			}
 			if p.config.Config.Hooks != nil {
 				s := configs.HookState{
 					Version:    p.container.config.Version,
