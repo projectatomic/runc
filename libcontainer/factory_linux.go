@@ -223,9 +223,9 @@ func (l *LinuxFactory) Type() string {
 // This is a low level implementation detail of the reexec and should not be consumed externally
 func (l *LinuxFactory) StartInitialization() (err error) {
 	var (
-		pipefd, rootfd int
+		pipefd, fifofd int
 		envInitPipe    = os.Getenv("_LIBCONTAINER_INITPIPE")
-		envStateDir    = os.Getenv("_LIBCONTAINER_STATEDIR")
+		envFifoFd      = os.Getenv("_LIBCONTAINER_FIFOFD")
 	)
 
 	// Get the INITPIPE.
@@ -240,12 +240,11 @@ func (l *LinuxFactory) StartInitialization() (err error) {
 	)
 	defer pipe.Close()
 
-	// Only init processes have STATEDIR.
-	rootfd = -1
+	// Only init processes have FIFOFD.
+	fifofd = -1
 	if it == initStandard {
-		rootfd, err = strconv.Atoi(envStateDir)
-		if err != nil {
-			return fmt.Errorf("unable to convert _LIBCONTAINER_STATEDIR=%s to int: %s", envStateDir, err)
+		if fifofd, err = strconv.Atoi(envFifoFd); err != nil {
+			return fmt.Errorf("unable to convert _LIBCONTAINER_FIFOFD=%s to int: %s", envFifoFd, err)
 		}
 	}
 
@@ -275,7 +274,7 @@ func (l *LinuxFactory) StartInitialization() (err error) {
 		}
 	}()
 
-	i, err = newContainerInit(it, pipe, rootfd)
+	i, err = newContainerInit(it, pipe, fifofd)
 	if err != nil {
 		return err
 	}
