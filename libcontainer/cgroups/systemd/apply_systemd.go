@@ -167,9 +167,11 @@ func (m *Manager) Apply(pid int) error {
 		return err
 	}
 
-	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, nil); err != nil {
+	statusChan := make(chan string)
+	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err != nil {
 		return err
 	}
+	<-statusChan
 
 	if err := joinCgroups(c, pid); err != nil {
 		return err
