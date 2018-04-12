@@ -1,15 +1,15 @@
-// +build linux
+// +build linux,!static_build
 
 package systemd
 
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	systemdDbus "github.com/coreos/go-systemd/dbus"
 	systemdUtil "github.com/coreos/go-systemd/util"
@@ -17,6 +17,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/opencontainers/runc/libcontainer/cgroups/fs"
 	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/Sirupsen/logrus"
 )
 
 type Manager struct {
@@ -69,8 +70,13 @@ const (
 )
 
 var (
-	connLock sync.Mutex
-	theConn  *systemdDbus.Conn
+	connLock                        sync.Mutex
+	theConn                         *systemdDbus.Conn
+	hasStartTransientUnit           bool
+	hasStartTransientSliceUnit      bool
+	hasTransientDefaultDependencies bool
+	hasDelegateScope                bool
+	hasDelegateSlice                bool
 )
 
 func newProp(name string, units interface{}) systemdDbus.Property {
@@ -81,7 +87,128 @@ func newProp(name string, units interface{}) systemdDbus.Property {
 }
 
 func UseSystemd() bool {
-	return systemdUtil.IsRunningSystemd()
+	if !systemdUtil.IsRunningSystemd() {
+		return false
+	}
+
+	connLock.Lock()
+	defer connLock.Unlock()
+
+	if theConn == nil {
+		var err error
+		theConn, err = systemdDbus.New()
+		if err != nil {
+			return false
+		}
+
+		// Assume we have StartTransientUnit
+		hasStartTransientUnit = true
+
+		// But if we get UnknownMethod error we don't
+		if _, err := theConn.StartTransientUnit("test.scope", "invalid", nil, nil); err != nil {
+			if dbusError, ok := err.(dbus.Error); ok {
+				if dbusError.Name == "org.freedesktop.DBus.Error.UnknownMethod" {
+					hasStartTransientUnit = false
+					return hasStartTransientUnit
+				}
+			}
+		}
+
+		// Ensure the scope name we use doesn't exist. Use the Pid to
+		// avoid collisions between multiple libcontainer users on a
+		// single host.
+		scope := fmt.Sprintf("libcontainer-%d-systemd-test-default-dependencies.scope", os.Getpid())
+		testScopeExists := true
+		for i := 0; i <= testScopeWait; i++ {
+			if _, err := theConn.StopUnit(scope, "replace", nil); err != nil {
+				if dbusError, ok := err.(dbus.Error); ok {
+					if strings.Contains(dbusError.Name, "org.freedesktop.systemd1.NoSuchUnit") {
+						testScopeExists = false
+						break
+					}
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		// Bail out if we can't kill this scope without testing for DefaultDependencies
+		if testScopeExists {
+			return hasStartTransientUnit
+		}
+
+		// Assume StartTransientUnit on a scope allows DefaultDependencies
+		hasTransientDefaultDependencies = true
+		ddf := newProp("DefaultDependencies", false)
+		if _, err := theConn.StartTransientUnit(scope, "replace", []systemdDbus.Property{ddf}, nil); err != nil {
+			if dbusError, ok := err.(dbus.Error); ok {
+				if strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.PropertyReadOnly") {
+					hasTransientDefaultDependencies = false
+				}
+			}
+		}
+
+		// Not critical because of the stop unit logic above.
+		theConn.StopUnit(scope, "replace", nil)
+
+		// Assume StartTransientUnit on a scope allows Delegate
+		hasDelegateScope = true
+		dlScope := newProp("Delegate", true)
+		if _, err := theConn.StartTransientUnit(scope, "replace", []systemdDbus.Property{dlScope}, nil); err != nil {
+			if dbusError, ok := err.(dbus.Error); ok {
+				if strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.PropertyReadOnly") {
+					hasDelegateScope = false
+				}
+			}
+		}
+
+		// Assume we have the ability to start a transient unit as a slice
+		// This was broken until systemd v229, but has been back-ported on RHEL environments >= 219
+		// For details, see: https://bugzilla.redhat.com/show_bug.cgi?id=1370299
+		hasStartTransientSliceUnit = true
+
+		// To ensure simple clean-up, we create a slice off the root with no hierarchy
+		slice := fmt.Sprintf("libcontainer_%d_systemd_test_default.slice", os.Getpid())
+		if _, err := theConn.StartTransientUnit(slice, "replace", nil, nil); err != nil {
+			if _, ok := err.(dbus.Error); ok {
+				hasStartTransientSliceUnit = false
+			}
+		}
+
+		for i := 0; i <= testSliceWait; i++ {
+			if _, err := theConn.StopUnit(slice, "replace", nil); err != nil {
+				if dbusError, ok := err.(dbus.Error); ok {
+					if strings.Contains(dbusError.Name, "org.freedesktop.systemd1.NoSuchUnit") {
+						hasStartTransientSliceUnit = false
+						break
+					}
+				}
+			} else {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		// Not critical because of the stop unit logic above.
+		theConn.StopUnit(slice, "replace", nil)
+
+		// Assume StartTransientUnit on a slice allows Delegate
+		hasDelegateSlice = true
+		dlSlice := newProp("Delegate", true)
+		if _, err := theConn.StartTransientUnit(slice, "replace", []systemdDbus.Property{dlSlice}, nil); err != nil {
+			if dbusError, ok := err.(dbus.Error); ok {
+				// Starting with systemd v237, Delegate is not even a property of slices anymore,
+				// so the D-Bus call fails with "InvalidArgs" error.
+				if strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.PropertyReadOnly") || strings.Contains(dbusError.Name, "org.freedesktop.DBus.Error.InvalidArgs") {
+					hasDelegateSlice = false
+				}
+			}
+		}
+
+		// Not critical because of the stop unit logic above.
+		theConn.StopUnit(scope, "replace", nil)
+		theConn.StopUnit(slice, "replace", nil)
+	}
+	return hasStartTransientUnit
 }
 
 func (m *Manager) Apply(pid int) error {
@@ -117,6 +244,10 @@ func (m *Manager) Apply(pid int) error {
 
 	// if we create a slice, the parent is defined via a Wants=
 	if strings.HasSuffix(unitName, ".slice") {
+		// This was broken until systemd v229, but has been back-ported on RHEL environments >= 219
+		if !hasStartTransientSliceUnit {
+			return fmt.Errorf("systemd version does not support ability to start a slice as transient unit")
+		}
 		properties = append(properties, systemdDbus.PropWants(slice))
 	} else {
 		// otherwise, we use Slice=
@@ -128,8 +259,17 @@ func (m *Manager) Apply(pid int) error {
 		properties = append(properties, newProp("PIDs", []uint32{uint32(pid)}))
 	}
 
-	// This is only supported on systemd versions 218 and above.
-	properties = append(properties, newProp("Delegate", true))
+	// Check if we can delegate. This is only supported on systemd versions 218 and above.
+	if strings.HasSuffix(unitName, ".slice") {
+		if hasDelegateSlice {
+			// systemd 237 and above no longer allows delegation on a slice
+			properties = append(properties, newProp("Delegate", true))
+		}
+	} else {
+		if hasDelegateScope {
+			properties = append(properties, newProp("Delegate", true))
+		}
+	}
 
 	// Always enable accounting, this gets us the same behaviour as the fs implementation,
 	// plus the kernel has some problems with joining the memory cgroup at a later time.
@@ -138,7 +278,10 @@ func (m *Manager) Apply(pid int) error {
 		newProp("CPUAccounting", true),
 		newProp("BlockIOAccounting", true))
 
-	properties = append(properties, newProp("DefaultDependencies", false))
+	if hasTransientDefaultDependencies {
+		properties = append(properties,
+			newProp("DefaultDependencies", false))
+	}
 
 	if c.Resources.Memory != 0 {
 		properties = append(properties,
@@ -147,14 +290,21 @@ func (m *Manager) Apply(pid int) error {
 
 	if c.Resources.CpuShares != 0 {
 		properties = append(properties,
-			newProp("CPUShares", uint64(c.Resources.CpuShares)))
+			newProp("CPUShares", c.Resources.CpuShares))
 	}
 
 	// cpu.cfs_quota_us and cpu.cfs_period_us are controlled by systemd.
 	if c.Resources.CpuQuota != 0 && c.Resources.CpuPeriod != 0 {
-		cpuQuotaPerSecUSec := c.Resources.CpuQuota * 1000000 / c.Resources.CpuPeriod
+		cpuQuotaPerSecUSec := c.Resources.CpuQuota*1000000 / c.Resources.CpuPeriod
+		// systemd converts CPUQuotaPerSecUSec (microseconds per CPU second) to CPUQuota
+		// (integer percentage of CPU) internally.  This means that if a fractional percent of
+		// CPU is indicated by Resources.CpuQuota, we need to round up to the nearest
+		// 10ms (1% of a second) such that child cgroups can set the cpu.cfs_quota_us they expect.
+		if cpuQuotaPerSecUSec%10000 != 0 {
+			cpuQuotaPerSecUSec = ((cpuQuotaPerSecUSec / 10000) + 1) * 10000
+		}
 		properties = append(properties,
-			newProp("CPUQuotaPerSecUSec", uint64(cpuQuotaPerSecUSec)))
+			newProp("CPUQuotaPerSecUSec", cpuQuotaPerSecUSec))
 	}
 
 	if c.Resources.BlkioWeight != 0 {
@@ -170,17 +320,16 @@ func (m *Manager) Apply(pid int) error {
 		}
 	}
 
-	var err error
-	theConn, err = systemdDbus.New()
-	if err != nil {
-		return err
-	}
-
 	statusChan := make(chan string)
-	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err != nil && !isUnitExists(err) {
+	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err == nil {
+		select {
+		case <-statusChan:
+		case <-time.After(time.Second):
+			logrus.Warnf("Timed out while waiting for StartTransientUnit(%s) completion signal from dbus. Continuing...", unitName)
+		}
+	} else if !isUnitExists(err) {
 		return err
 	}
-	<-statusChan
 
 	if err := joinCgroups(c, pid); err != nil {
 		return err
@@ -208,14 +357,6 @@ func (m *Manager) Destroy() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if theConn == nil {
-		var err error
-		theConn, err = systemdDbus.New()
-		if err != nil {
-			return err
-		}
-	}
 	theConn.StopUnit(getUnitName(m.Cgroups), "replace", nil)
 	if err := cgroups.RemovePaths(m.Paths); err != nil {
 		return err
@@ -229,15 +370,6 @@ func (m *Manager) GetPaths() map[string]string {
 	paths := m.Paths
 	m.mu.Unlock()
 	return paths
-}
-
-func writeFile(dir, file, data string) error {
-	// Normally dir should not be empty, one case is that cgroup subsystem
-	// is not mounted, we will get empty dir, and we want it fail here.
-	if dir == "" {
-		return fmt.Errorf("no such directory for %s", file)
-	}
-	return ioutil.WriteFile(filepath.Join(dir, file), []byte(data), 0700)
 }
 
 func join(c *configs.Cgroup, subsystem string, pid int) (string, error) {
@@ -260,7 +392,6 @@ func joinCgroups(c *configs.Cgroup, pid int) error {
 		switch name {
 		case "name=systemd":
 			// let systemd handle this
-			break
 		case "cpuset":
 			path, err := getSubsystemPath(c, name)
 			if err != nil && !cgroups.IsNotFound(err) {
@@ -270,7 +401,6 @@ func joinCgroups(c *configs.Cgroup, pid int) error {
 			if err := s.ApplyDir(path, c, pid); err != nil {
 				return err
 			}
-			break
 		default:
 			_, err := join(c, name, pid)
 			if err != nil {
@@ -294,7 +424,7 @@ func joinCgroups(c *configs.Cgroup, pid int) error {
 
 // systemd represents slice hierarchy using `-`, so we need to follow suit when
 // generating the path of slice. Essentially, test-a-b.slice becomes
-// test.slice/test-a.slice/test-a-b.slice.
+// /test.slice/test-a.slice/test-a-b.slice.
 func ExpandSlice(slice string) (string, error) {
 	suffix := ".slice"
 	// Name has to end with ".slice", but can't be just ".slice".
@@ -320,10 +450,9 @@ func ExpandSlice(slice string) (string, error) {
 		}
 
 		// Append the component to the path and to the prefix.
-		path += prefix + component + suffix + "/"
+		path += "/" + prefix + component + suffix
 		prefix += component + "-"
 	}
-
 	return path, nil
 }
 
@@ -333,7 +462,7 @@ func getSubsystemPath(c *configs.Cgroup, subsystem string) (string, error) {
 		return "", err
 	}
 
-	initPath, err := cgroups.GetInitCgroupDir(subsystem)
+	initPath, err := cgroups.GetInitCgroup(subsystem)
 	if err != nil {
 		return "", err
 	}
