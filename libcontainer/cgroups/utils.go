@@ -235,38 +235,14 @@ func GetThisCgroupDir(subsystem string) (string, error) {
 	return getControllerPath(subsystem, cgroups)
 }
 
-func GetInitCgroup(subsystem string) (string, error) {
+func GetInitCgroupDir(subsystem string) (string, error) {
+
 	cgroups, err := ParseCgroupFile("/proc/1/cgroup")
 	if err != nil {
 		return "", err
 	}
 
 	return getControllerPath(subsystem, cgroups)
-}
-
-func GetInitCgroupPath(subsystem string) (string, error) {
-	cgroup, err := GetInitCgroup(subsystem)
-	if err != nil {
-		return "", err
-	}
-
-	return getCgroupPathHelper(subsystem, cgroup)
-}
-
-func getCgroupPathHelper(subsystem, cgroup string) (string, error) {
-	mnt, root, err := FindCgroupMountpointAndRoot(subsystem)
-	if err != nil {
-		return "", err
-	}
-
-	// This is needed for nested containers, because in /proc/self/cgroup we
-	// see pathes from host, which don't exist in container.
-	relCgroup, err := filepath.Rel(root, cgroup)
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(mnt, relCgroup), nil
 }
 
 func readProcsFile(dir string) ([]int, error) {
