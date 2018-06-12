@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/Sirupsen/logrus"
 	systemdDbus "github.com/coreos/go-systemd/dbus"
 	systemdUtil "github.com/coreos/go-systemd/util"
 	"github.com/godbus/dbus"
@@ -176,11 +178,16 @@ func (m *Manager) Apply(pid int) error {
 		return err
 	}
 
-	statusChan := make(chan string)
-	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err != nil && !isUnitExists(err) {
+	statusChan := make(chan string, 1)
+	if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err == nil {
+		select {
+		case <-statusChan:
+		case <-time.After(time.Second):
+			logrus.Warnf("Timed out while waiting for StartTransientUnit(%s) completion signal from dbus. Continuing...", unitName)
+		}
+	} else if !isUnitExists(err) {
 		return err
 	}
-	<-statusChan
 
 	if err := joinCgroups(c, pid); err != nil {
 		return err
