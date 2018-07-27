@@ -35,6 +35,7 @@ func TestExecIn(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -105,6 +106,7 @@ func testExecInRlimit(t *testing.T, userns bool) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -159,6 +161,7 @@ func TestExecInAdditionalGroups(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -215,6 +218,7 @@ func TestExecInError(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -267,6 +271,7 @@ func TestExecInTTY(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -327,6 +332,7 @@ func TestExecInEnvironment(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -391,6 +397,7 @@ func TestExecinPassExtraFiles(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -464,6 +471,7 @@ func TestExecInOomScoreAdj(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
@@ -519,6 +527,7 @@ func TestExecInUserns(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(process)
 	stdinR.Close()
