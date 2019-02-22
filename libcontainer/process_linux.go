@@ -360,6 +360,9 @@ loop:
 			return newSystemError(fmt.Errorf("invalid JSON payload from child"))
 		}
 	}
+	if !sentResume {
+		return newSystemError(fmt.Errorf("container init exited prematurely"))
+	}
 	if !sentRun {
 		return newSystemErrorWithCause(ierr, "container init")
 	}
