@@ -53,6 +53,7 @@ int memfd_create(const char *name, unsigned int flags)
 #endif
 }
 
+
 /* This comes directly from <linux/fcntl.h>. */
 #ifndef F_LINUX_SPECIFIC_BASE
 #  define F_LINUX_SPECIFIC_BASE 1024
@@ -159,7 +160,7 @@ static char *read_file(char *path, size_t *length)
 
 	*length = 0;
 	for (;;) {
-		int n;
+		ssize_t n;
 
 		n = read(fd, buf, sizeof(buf));
 		if (n < 0)
@@ -233,11 +234,22 @@ enum {
 	EFD_FILE,
 };
 
+/*
+ * This comes from <linux/fcntl.h>. We can't hard-code __O_TMPFILE because it
+ * changes depending on the architecture. If we don't have O_TMPFILE we always
+ * have the mkostemp(3) fallback.
+ */
+#ifndef O_TMPFILE
+#  if defined(__O_TMPFILE) && defined(O_DIRECTORY)
+#    define O_TMPFILE (__O_TMPFILE | O_DIRECTORY)
+#  endif
+#endif
+
 static int make_execfd(int *fdtype)
 {
 	int fd = -1;
 	char template[PATH_MAX] = {0};
-	char *prefix = secure_getenv("_LIBCONTAINER_STATEDIR_PATH");
+	char *prefix = getenv("_LIBCONTAINER_STATEDIR_PATH");
 
 	if (!prefix || *prefix != '/')
 		prefix = "/tmp";
@@ -256,6 +268,7 @@ static int make_execfd(int *fdtype)
 	if (errno != ENOSYS && errno != EINVAL)
 		goto error;
 
+#ifdef O_TMPFILE
 	/*
 	 * Try O_TMPFILE to avoid races where someone might snatch our file. Note
 	 * that O_EXCL isn't actually a security measure here (since you can just
@@ -285,6 +298,7 @@ static int make_execfd(int *fdtype)
 	}
 	if (errno != EISDIR)
 		goto error;
+#endif /* defined(O_TMPFILE) */
 
 	/*
 	 * Our final option is to create a temporary file the old-school way, and
@@ -337,7 +351,7 @@ static int try_bindfd(void)
 {
 	int fd, ret = -1;
 	char template[PATH_MAX] = {0};
-	char *prefix = secure_getenv("_LIBCONTAINER_STATEDIR");
+	char *prefix = getenv("_LIBCONTAINER_STATEDIR_PATH");
 
 	if (!prefix || *prefix != '/')
 		prefix = "/tmp";
@@ -389,6 +403,33 @@ out:
 	return ret;
 }
 
+static ssize_t fd_to_fd(int outfd, int infd)
+{
+	ssize_t total = 0;
+	char buffer[4096];
+
+	for (;;) {
+		ssize_t nread, nwritten = 0;
+
+		nread = read(infd, buffer, sizeof(buffer));
+		if (nread < 0)
+			return -1;
+		if (!nread)
+			break;
+
+		do {
+			ssize_t n = write(outfd, buffer + nwritten, nread - nwritten);
+			if (n < 0)
+				return -1;
+			nwritten += n;
+		} while(nwritten < nread);
+
+		total += nwritten;
+	}
+
+	return total;
+}
+
 static int clone_binary(void)
 {
 	int binfd, execfd;
@@ -421,8 +462,12 @@ static int clone_binary(void)
 
 	while (sent < statbuf.st_size) {
 		int n = sendfile(execfd, binfd, NULL, statbuf.st_size - sent);
-		if (n < 0)
-			goto error_binfd;
+		if (n < 0) {
+			/* sendfile can fail so we fallback to a dumb user-space copy. */
+			n = fd_to_fd(execfd, binfd);
+			if (n < 0)
+				goto error_binfd;
+		}
 		sent += n;
 	}
 	close(binfd);
