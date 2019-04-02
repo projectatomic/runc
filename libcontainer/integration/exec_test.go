@@ -229,6 +229,7 @@ func TestEnter(t *testing.T) {
 		Env:    standardEnvironment,
 		Stdin:  stdinR,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	stdinR.Close()
@@ -318,6 +319,7 @@ func TestProcessEnv(t *testing.T) {
 		},
 		Stdin:  nil,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -366,6 +368,7 @@ func TestProcessCaps(t *testing.T) {
 		Capabilities: processCaps,
 		Stdin:        nil,
 		Stdout:       &stdout,
+		Init:         true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -436,6 +439,7 @@ func TestAdditionalGroups(t *testing.T) {
 		Stdin:            nil,
 		Stdout:           &stdout,
 		AdditionalGroups: []string{"plugdev", "audio"},
+		Init:             true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -496,6 +500,7 @@ func testFreeze(t *testing.T, systemd bool) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(pconfig)
 	stdinR.Close()
@@ -707,6 +712,7 @@ func TestContainerState(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 	err = container.Run(p)
 	if err != nil {
@@ -841,6 +847,7 @@ func TestMountCmds(t *testing.T) {
 		Cwd:  "/",
 		Args: []string{"sh", "-c", "env"},
 		Env:  standardEnvironment,
+		Init: true,
 	}
 	err = container.Run(&pconfig)
 	if err != nil {
@@ -890,6 +897,7 @@ func TestSysctl(t *testing.T) {
 		Env:    standardEnvironment,
 		Stdin:  nil,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -1030,6 +1038,7 @@ func TestOomScoreAdj(t *testing.T) {
 		Env:    standardEnvironment,
 		Stdin:  nil,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -1102,6 +1111,7 @@ func TestHook(t *testing.T) {
 		Env:    standardEnvironment,
 		Stdin:  nil,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)
@@ -1218,6 +1228,7 @@ func TestRootfsPropagationSlaveMount(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 
 	err = container.Run(pconfig)
@@ -1335,6 +1346,7 @@ func TestRootfsPropagationSharedMount(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR,
+		Init:  true,
 	}
 
 	err = container.Run(pconfig)
@@ -1440,6 +1452,7 @@ func TestInitJoinPID(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR1,
+		Init:  true,
 	}
 	err = container1.Run(init1)
 	stdinR1.Close()
@@ -1466,6 +1479,7 @@ func TestInitJoinPID(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR2,
+		Init:  true,
 	}
 	err = container2.Run(init2)
 	stdinR2.Close()
@@ -1545,6 +1559,7 @@ func TestInitJoinNetworkAndUser(t *testing.T) {
 		Args:  []string{"cat"},
 		Env:   standardEnvironment,
 		Stdin: stdinR1,
+		Init:  true,
 	}
 	err = container1.Run(init1)
 	stdinR1.Close()
@@ -1646,6 +1661,7 @@ func TestTmpfsCopyUp(t *testing.T) {
 		Env:    standardEnvironment,
 		Stdin:  nil,
 		Stdout: &stdout,
+		Init:   true,
 	}
 	err = container.Run(&pconfig)
 	ok(t, err)

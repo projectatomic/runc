@@ -131,6 +131,7 @@ func execProcess(context *cli.Context) (int, error) {
 		console:         context.String("console"),
 		detach:          detach,
 		pidFile:         context.String("pid-file"),
+		init:            false,
 	}
 	return r.run(p)
 }

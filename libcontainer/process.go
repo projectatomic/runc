@@ -68,6 +68,9 @@ type Process struct {
 	// If Rlimits are not set, the container will inherit rlimits from the parent process
 	Rlimits []configs.Rlimit
 
+	// Init specifies whether the process is the first process in the container.
+	Init bool
+
 	ops processOperations
 }
 
