@@ -93,6 +93,10 @@ func (e *genericError) Error() string {
 	if e.Cause == "" {
 		return e.Message
 	}
+
+	if e.Stack.Frames == nil {
+		return fmt.Sprintf("<unknown>:<unknown>: %s caused %q", e.Cause, e.Message)
+	}
 	frame := e.Stack.Frames[0]
 	return fmt.Sprintf("%s:%d: %s caused %q", frame.File, frame.Line, e.Cause, e.Message)
 }
