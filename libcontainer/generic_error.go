@@ -94,7 +94,7 @@ func (e *genericError) Error() string {
 		return e.Message
 	}
 
-	if e.Stack.Frames == nil {
+	if len(e.Stack.Frames) == 0 {
 		return fmt.Sprintf("<unknown>:<unknown>: %s caused %q", e.Cause, e.Message)
 	}
 	frame := e.Stack.Frames[0]
