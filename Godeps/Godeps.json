@@ -87,6 +87,10 @@
 			"ImportPath": "github.com/cyphar/filepath-securejoin",
 			"Comment": "v0.2.2",
 			"Rev": "a261ee33d7a517f054effbf451841abaafe3e0fd"
+		},
+		{
+			"ImportPath": "golang.org/x/sys/unix",
+			"Rev": "a5b02f93d862f065920dd6a40dddc66b60d0dec4"
 		}
 	]
 }
