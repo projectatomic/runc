@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/opencontainers/runc",
 	"GoVersion": "go1.5.3",
-	"GodepVersion": "v74",
+	"GodepVersion": "v80",
 	"Deps": [
 		{
 			"ImportPath": "github.com/Sirupsen/logrus",
@@ -77,6 +77,16 @@
 		{
 			"ImportPath": "github.com/mrunalp/fileutils",
 			"Rev": "ed869b029674c0e9ce4c0dfa781405c2d9946d08"
+		},
+		{
+			"ImportPath": "github.com/pkg/errors",
+			"Comment": "v0.8.1",
+			"Rev": "ba968bfe8b2f7e042a574c888954fccecfa385b4"
+		},
+		{
+			"ImportPath": "github.com/cyphar/filepath-securejoin",
+			"Comment": "v0.2.2",
+			"Rev": "a261ee33d7a517f054effbf451841abaafe3e0fd"
 		}
 	]
 }

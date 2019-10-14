@@ -9,16 +9,24 @@ import (
 )
 
 func TestCheckMountDestOnProc(t *testing.T) {
-	dest := "/rootfs/proc/"
-	err := checkMountDestination("/rootfs", dest)
+	dest := "/rootfs/proc/sys"
+	err := checkProcMount("/rootfs", dest, "")
 	if err == nil {
 		t.Fatal("destination inside proc should return an error")
 	}
 }
 
+func TestCheckMountDestOnProcChroot(t *testing.T) {
+	dest := "/rootfs/proc/"
+	err := checkProcMount("/rootfs", dest, "/proc")
+	if err != nil {
+		t.Fatal("destination inside proc when using chroot should not return an error")
+	}
+}
+
 func TestCheckMountDestInSys(t *testing.T) {
 	dest := "/rootfs//sys/fs/cgroup"
-	err := checkMountDestination("/rootfs", dest)
+	err := checkProcMount("/rootfs", dest, "")
 	if err != nil {
 		t.Fatal("destination inside /sys should not return an error")
 	}
@@ -26,7 +34,7 @@ func TestCheckMountDestInSys(t *testing.T) {
 
 func TestCheckMountDestFalsePositive(t *testing.T) {
 	dest := "/rootfs/sysfiles/fs/cgroup"
-	err := checkMountDestination("/rootfs", dest)
+	err := checkProcMount("/rootfs", dest, "")
 	if err != nil {
 		t.Fatal(err)
 	}
