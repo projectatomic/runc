@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/opencontainers/runc/libcontainer/system"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -153,6 +154,12 @@ func getSELinuxPolicyRoot() string {
 	return selinuxDir + readConfig(selinuxTypeTag)
 }
 
+func isProcHandle(fh *os.File) (bool, error) {
+	var buf unix.Statfs_t
+	err := unix.Fstatfs(int(fh.Fd()), &buf)
+	return buf.Type == unix.PROC_SUPER_MAGIC, err
+}
+
 func readCon(name string) (string, error) {
 	var val string
 
@@ -161,6 +168,12 @@ func readCon(name string) (string, error) {
 		return "", err
 	}
 	defer in.Close()
+
+	if ok, err := isProcHandle(in); err != nil {
+		return "", err
+	} else if !ok {
+		return "", fmt.Errorf("%s not on procfs", name)
+	}
 
 	_, err = fmt.Fscanf(in, "%s", &val)
 	return val, err
@@ -212,6 +225,12 @@ func writeCon(name string, val string) error {
 		return err
 	}
 	defer out.Close()
+
+	if ok, err := isProcHandle(out); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%s not on procfs", name)
+	}
 
 	if val != "" {
 		_, err = out.Write([]byte(val))

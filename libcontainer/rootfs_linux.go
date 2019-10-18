@@ -14,14 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/docker/docker/pkg/mount"
-	"github.com/docker/docker/pkg/symlink"
 	"github.com/mrunalp/fileutils"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/opencontainers/runc/libcontainer/configs"
 	"github.com/opencontainers/runc/libcontainer/label"
 	"github.com/opencontainers/runc/libcontainer/system"
 	libcontainerUtils "github.com/opencontainers/runc/libcontainer/utils"
+
+	"golang.org/x/sys/unix"
 )
 
 const defaultMountFlags = syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV
@@ -125,6 +127,33 @@ func mountCmd(cmd configs.Command) error {
 	return nil
 }
 
+func prepareBindMount(m *configs.Mount, rootfs string) error {
+	stat, err := os.Stat(m.Source)
+	if err != nil {
+		// error out if the source of a bind mount does not exist as we will be
+		// unable to bind anything to it.
+		return err
+	}
+	// ensure that the destination of the bind mount is resolved of symlinks at mount time because
+	// any previous mounts can invalidate the next mount's destination.
+	// this can happen when a user specifies mounts within other mounts to cause breakouts or other
+	// evil stuff to try to escape the container's rootfs.
+	var dest string
+	if dest, err = securejoin.SecureJoin(rootfs, m.Destination); err != nil {
+		return err
+	}
+	if err := checkProcMount(rootfs, dest, m.Source); err != nil {
+		return err
+	}
+	// update the mount with the correct dest after symlinks are resolved.
+	m.Destination = dest
+	if err := createIfNotExists(dest, stat.IsDir()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func mountToRootfs(m *configs.Mount, rootfs, mountLabel string) error {
 	var (
 		dest = m.Destination
@@ -195,25 +224,7 @@ func mountToRootfs(m *configs.Mount, rootfs, mountLabel string) error {
 		}
 		return nil
 	case "bind":
-		stat, err := os.Stat(m.Source)
-		if err != nil {
-			// error out if the source of a bind mount does not exist as we will be
-			// unable to bind anything to it.
-			return err
-		}
-		// ensure that the destination of the bind mount is resolved of symlinks at mount time because
-		// any previous mounts can invalidate the next mount's destination.
-		// this can happen when a user specifies mounts within other mounts to cause breakouts or other
-		// evil stuff to try to escape the container's rootfs.
-		if dest, err = symlink.FollowSymlinkInScope(filepath.Join(rootfs, m.Destination), rootfs); err != nil {
-			return err
-		}
-		if err := checkMountDestination(rootfs, dest); err != nil {
-			return err
-		}
-		// update the mount with the correct dest after symlinks are resolved.
-		m.Destination = dest
-		if err := createIfNotExists(dest, stat.IsDir()); err != nil {
+		if err := prepareBindMount(m, rootfs); err != nil {
 			return err
 		}
 		if err := mountPropagate(m, rootfs, mountLabel); err != nil {
@@ -288,6 +299,19 @@ func mountToRootfs(m *configs.Mount, rootfs, mountLabel string) error {
 			}
 		}
 	default:
+		// ensure that the destination of the mount is resolved of symlinks at mount time because
+		// any previous mounts can invalidate the next mount's destination.
+		// this can happen when a user specifies mounts within other mounts to cause breakouts or other
+		// evil stuff to try to escape the container's rootfs.
+		var err error
+		if dest, err = securejoin.SecureJoin(rootfs, m.Destination); err != nil {
+			return err
+		}
+		if err := checkProcMount(rootfs, dest, m.Source); err != nil {
+			return err
+		}
+		// update the mount with the correct dest after symlinks are resolved.
+		m.Destination = dest
 		if err := os.MkdirAll(dest, 0755); err != nil {
 			return err
 		}
@@ -330,12 +354,12 @@ func getCgroupMounts(m *configs.Mount) ([]*configs.Mount, error) {
 	return binds, nil
 }
 
-// checkMountDestination checks to ensure that the mount destination is not over the top of /proc.
+// checkProcMount checks to ensure that the mount destination is not over the top of /proc.
 // dest is required to be an abs path and have any symlinks resolved before calling this function.
-func checkMountDestination(rootfs, dest string) error {
-	invalidDestinations := []string{
-		"/proc",
-	}
+//
+// if source is nil, don't stat the filesystem.  This is used for restore of a checkpoint.
+func checkProcMount(rootfs, dest, source string) error {
+	const procPath = "/proc"
 	// White list, it should be sub directories of invalid destinations
 	validDestinations := []string{
 		// These entries can be bind mounted by files emulated by fuse,
@@ -357,16 +381,40 @@ func checkMountDestination(rootfs, dest string) error {
 			return nil
 		}
 	}
-	for _, invalid := range invalidDestinations {
-		path, err := filepath.Rel(filepath.Join(rootfs, invalid), dest)
+	path, err := filepath.Rel(filepath.Join(rootfs, procPath), dest)
+	if err != nil {
+		return err
+	}
+	// pass if the mount path is located outside of /proc
+	if strings.HasPrefix(path, "..") {
+		return nil
+	}
+	if path == "." {
+		// an empty source is pasted on restore
+		if source == "" {
+			return nil
+		}
+		// only allow a mount on-top of proc if it's source is "proc"
+		isproc, err := isProc(source)
 		if err != nil {
 			return err
 		}
-		if path == "." || !strings.HasPrefix(path, "..") {
-			return fmt.Errorf("%q cannot be mounted because it is located inside %q", dest, invalid)
+		// pass if the mount is happening on top of /proc and the source of
+		// the mount is a proc filesystem
+		if isproc {
+			return nil
 		}
+		return fmt.Errorf("%q cannot be mounted because it is not of type proc", dest)
 	}
-	return nil
+	return fmt.Errorf("%q cannot be mounted because it is inside /proc", dest)
+}
+
+func isProc(path string) (bool, error) {
+	var s unix.Statfs_t
+	if err := unix.Statfs(path, &s); err != nil {
+		return false, err
+	}
+	return s.Type == unix.PROC_SUPER_MAGIC, nil
 }
 
 func setupDevSymlinks(rootfs string) error {
