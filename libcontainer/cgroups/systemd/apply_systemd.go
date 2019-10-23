@@ -130,6 +130,8 @@ func (m *Manager) Apply(pid int) error {
 		properties = append(properties, newProp("PIDs", []uint32{uint32(pid)}))
 	}
 
+	properties = append(properties, newProp("CollectMode", "inactive-or-failed"))
+
 	// This is only supported on systemd versions 218 and above.
 	properties = append(properties, newProp("Delegate", true))
 
