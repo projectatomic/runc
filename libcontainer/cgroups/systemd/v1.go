@@ -212,11 +212,18 @@ func (m *LegacyManager) Destroy() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	unitName := getUnitName(m.Cgroups)
-	if err := stopUnit(unitName); err != nil {
+
+	err := stopUnit(unitName)
+	// Both on success and on error, cleanup all the cgroups we are aware of.
+	// Some of them were created directly by Apply() and are not managed by systemd.
+	if err2 := cgroups.RemovePaths(m.Paths); err2 != nil {
+		return err2
+	}
+	if err != nil {
 		return err
 	}
+
 	m.Paths = make(map[string]string)
 	return nil
 }
