@@ -220,12 +220,7 @@ func (m *LegacyManager) Destroy() error {
 	if err2 := cgroups.RemovePaths(m.Paths); err2 != nil {
 		return err2
 	}
-	if err != nil {
-		return err
-	}
-
-	m.Paths = make(map[string]string)
-	return nil
+	return err
 }
 
 func (m *LegacyManager) GetPaths() map[string]string {

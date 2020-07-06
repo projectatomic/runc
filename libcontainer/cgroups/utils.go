@@ -488,6 +488,7 @@ func RemovePaths(paths map[string]string) (err error) {
 			}
 		}
 		if len(paths) == 0 {
+			paths = make(map[string]string)
 			return nil
 		}
 	}
