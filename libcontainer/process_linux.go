@@ -364,7 +364,10 @@ loop:
 		return newSystemError(fmt.Errorf("container init exited prematurely"))
 	}
 	if !sentRun {
-		return newSystemErrorWithCause(ierr, "container init")
+		if ierr != nil {
+			return newSystemErrorWithCause(ierr, "container init")
+		}
+		return newSystemError(errors.New("container init failed"))
 	}
 	if p.config.Config.Namespaces.Contains(configs.NEWNS) && !sentResume {
 		return newSystemError(fmt.Errorf("could not synchronise after executing prestart hooks with container process"))
