@@ -194,11 +194,7 @@ func (m *Manager) Destroy() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := cgroups.RemovePaths(m.Paths); err != nil {
-		return err
-	}
-	m.Paths = make(map[string]string)
-	return nil
+	return cgroups.RemovePaths(m.Paths)
 }
 
 func (m *Manager) GetPaths() map[string]string {
