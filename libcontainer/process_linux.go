@@ -85,9 +85,9 @@ func (p *setnsProcess) signal(sig os.Signal) error {
 	return unix.Kill(p.pid(), s)
 }
 
-func (p *setnsProcess) start() (err error) {
+func (p *setnsProcess) start() (retErr error) {
 	defer p.messageSockPair.parent.Close()
-	err = p.cmd.Start()
+	err := p.cmd.Start()
 	// close the write-side of the pipes (controlled by child)
 	p.messageSockPair.child.Close()
 	p.logFilePair.child.Close()
@@ -99,7 +99,7 @@ func (p *setnsProcess) start() (err error) {
 			return newSystemErrorWithCause(err, "copying bootstrap data to pipe")
 		}
 	}
-	if err = p.execSetns(); err != nil {
+	if err := p.execSetns(); err != nil {
 		return newSystemErrorWithCause(err, "executing setns process")
 	}
 	if len(p.cgroupPaths) > 0 {
