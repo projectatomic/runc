@@ -53,6 +53,26 @@ func GetCgroupParamKeyValue(t string) (string, uint64, error) {
 	}
 }
 
+// GetValueByKey reads a key-value pairs from the specified cgroup file,
+// and returns a value of the specified key. ParseUint is used for value
+// conversion.
+func GetValueByKey(path, file, key string) (uint64, error) {
+	content, err := ioutil.ReadFile(filepath.Join(path, file))
+	if err != nil {
+		return 0, err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		arr := strings.Split(line, " ")
+		if len(arr) == 2 && arr[0] == key {
+			return ParseUint(arr[1], 10, 64)
+		}
+	}
+
+	return 0, nil
+}
+
 // Gets a single uint64 value from the specified cgroup file.
 func GetCgroupParamUint(cgroupPath, cgroupFile string) (uint64, error) {
 	fileName := filepath.Join(cgroupPath, cgroupFile)
