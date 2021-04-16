@@ -5,7 +5,7 @@ go 1.14
 require (
 	github.com/checkpoint-restore/go-criu/v4 v4.1.0
 	github.com/cilium/ebpf v0.2.0
-	github.com/containerd/console v1.0.1
+	github.com/containerd/console v1.0.2
 	github.com/coreos/go-systemd/v22 v22.1.0
 	github.com/cyphar/filepath-securejoin v0.2.2
 	github.com/docker/go-units v0.4.0
@@ -24,5 +24,5 @@ require (
 	github.com/vishvananda/netlink v1.1.0
 	github.com/willf/bitset v1.1.11
 	golang.org/x/net v0.0.0-20201224014010-6772e930b67b
-	golang.org/x/sys v0.0.0-20201119102817-f84b799fce68
+	golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c
 )
