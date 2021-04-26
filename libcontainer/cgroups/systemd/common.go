@@ -20,10 +20,6 @@ import (
 )
 
 var (
-	connOnce sync.Once
-	connDbus *systemdDbus.Conn
-	connErr  error
-
 	versionOnce sync.Once
 	version     int
 	versionErr  error
@@ -282,19 +278,6 @@ func generateDeviceProperties(rules []*configs.DeviceRule) ([]systemdDbus.Proper
 
 	properties = append(properties, newProp("DeviceAllow", deviceAllowList))
 	return properties, nil
-}
-
-// getDbusConnection lazy initializes systemd dbus connection
-// and returns it
-func getDbusConnection(rootless bool) (*systemdDbus.Conn, error) {
-	connOnce.Do(func() {
-		if rootless {
-			connDbus, connErr = NewUserSystemdDbus()
-		} else {
-			connDbus, connErr = systemdDbus.New()
-		}
-	})
-	return connDbus, connErr
 }
 
 func newProp(name string, units interface{}) systemdDbus.Property {

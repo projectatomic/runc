@@ -24,6 +24,7 @@ type unifiedManager struct {
 	// path is like "/sys/fs/cgroup/user.slice/user-1001.slice/session-1.scope"
 	path     string
 	rootless bool
+	dbus     *dbusConnManager
 }
 
 func NewUnifiedManager(config *configs.Cgroup, path string, rootless bool) cgroups.Manager {
@@ -31,6 +32,7 @@ func NewUnifiedManager(config *configs.Cgroup, path string, rootless bool) cgrou
 		cgroups:  config,
 		path:     path,
 		rootless: rootless,
+		dbus:     newDbusConnManager(rootless),
 	}
 }
 
@@ -136,7 +138,7 @@ func (m *unifiedManager) Apply(pid int) error {
 	properties = append(properties,
 		newProp("DefaultDependencies", false))
 
-	dbusConnection, err := getDbusConnection(m.rootless)
+	dbusConnection, err := m.dbus.getConnection()
 	if err != nil {
 		return err
 	}
@@ -167,7 +169,7 @@ func (m *unifiedManager) Destroy() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	dbusConnection, err := getDbusConnection(m.rootless)
+	dbusConnection, err := m.dbus.getConnection()
 	if err != nil {
 		return err
 	}
@@ -206,7 +208,7 @@ func (m *unifiedManager) getSliceFull() (string, error) {
 	}
 
 	if m.rootless {
-		dbusConnection, err := getDbusConnection(m.rootless)
+		dbusConnection, err := m.dbus.getConnection()
 		if err != nil {
 			return "", err
 		}
@@ -289,7 +291,7 @@ func (m *unifiedManager) GetStats() (*cgroups.Stats, error) {
 }
 
 func (m *unifiedManager) Set(container *configs.Config) error {
-	dbusConnection, err := getDbusConnection(m.rootless)
+	dbusConnection, err := m.dbus.getConnection()
 	if err != nil {
 		return err
 	}
