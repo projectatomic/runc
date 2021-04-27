@@ -72,11 +72,11 @@ func OpenFile(dir, file string, flags int) (*os.File, error) {
 		mode = 0o600
 	}
 	if prepareOpenat2() != nil {
-		return openWithSecureJoin(dir, file, flags, mode)
+		return openFallback(dir, file, flags, mode)
 	}
 	reldir := strings.TrimPrefix(dir, cgroupfsPrefix)
 	if len(reldir) == len(dir) { // non-standard path, old system?
-		return openWithSecureJoin(dir, file, flags, mode)
+		return openFallback(dir, file, flags, mode)
 	}
 
 	relname := reldir + "/" + file
@@ -93,10 +93,18 @@ func OpenFile(dir, file string, flags int) (*os.File, error) {
 	return os.NewFile(uintptr(fd), cgroupfsPrefix+relname), nil
 }
 
-func openWithSecureJoin(dir, file string, flags int, mode os.FileMode) (*os.File, error) {
-	path, err := securejoin.SecureJoin(dir, file)
-	if err != nil {
-		return nil, err
+func openFallback(dir, file string, flags int, mode os.FileMode) (*os.File, error) {
+	var path string
+	// Do not use securejoin for files opened read-only,
+	// to speed up operations like GetStats.
+	if flags&unix.O_ACCMODE == unix.O_RDONLY {
+		path = dir + "/" + file
+	} else {
+		var err error
+		path, err = securejoin.SecureJoin(dir, file)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return os.OpenFile(path, flags, mode)
