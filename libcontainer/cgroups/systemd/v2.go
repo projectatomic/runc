@@ -36,7 +36,7 @@ func NewUnifiedManager(config *configs.Cgroup, path string, rootless bool) cgrou
 	}
 }
 
-func genV2ResourcesProperties(c *configs.Cgroup, conn *systemdDbus.Conn) ([]systemdDbus.Property, error) {
+func genV2ResourcesProperties(c *configs.Cgroup, cm *dbusConnManager) ([]systemdDbus.Property, error) {
 	var properties []systemdDbus.Property
 	r := c.Resources
 
@@ -74,7 +74,7 @@ func genV2ResourcesProperties(c *configs.Cgroup, conn *systemdDbus.Conn) ([]syst
 			newProp("CPUWeight", r.CpuWeight))
 	}
 
-	addCpuQuota(conn, &properties, r.CpuQuota, r.CpuPeriod)
+	addCpuQuota(cm, &properties, r.CpuQuota, r.CpuPeriod)
 
 	if r.PidsLimit > 0 || r.PidsLimit == -1 {
 		properties = append(properties,
@@ -138,19 +138,14 @@ func (m *unifiedManager) Apply(pid int) error {
 	properties = append(properties,
 		newProp("DefaultDependencies", false))
 
-	dbusConnection, err := m.dbus.getConnection()
-	if err != nil {
-		return err
-	}
-	resourcesProperties, err := genV2ResourcesProperties(c, dbusConnection)
+	resourcesProperties, err := genV2ResourcesProperties(c, m.dbus)
 	if err != nil {
 		return err
 	}
 	properties = append(properties, resourcesProperties...)
 	properties = append(properties, c.SystemdProps...)
 
-	if err := startUnit(dbusConnection, unitName, properties); err != nil {
-		m.dbus.checkAndReconnect(dbusConnection, err)
+	if err := startUnit(m.dbus, unitName, properties); err != nil {
 		return errors.Wrapf(err, "error while starting unit %q with properties %+v", unitName, properties)
 	}
 
@@ -170,17 +165,13 @@ func (m *unifiedManager) Destroy() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	dbusConnection, err := m.dbus.getConnection()
-	if err != nil {
-		return err
-	}
 	unitName := getUnitName(m.cgroups)
-	if err := stopUnit(dbusConnection, unitName); err != nil {
+	if err := stopUnit(m.dbus, unitName); err != nil {
 		return err
 	}
 
 	// XXX this is probably not needed, systemd should handle it
-	err = os.Remove(m.path)
+	err := os.Remove(m.path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -292,11 +283,7 @@ func (m *unifiedManager) GetStats() (*cgroups.Stats, error) {
 }
 
 func (m *unifiedManager) Set(container *configs.Config) error {
-	dbusConnection, err := m.dbus.getConnection()
-	if err != nil {
-		return err
-	}
-	properties, err := genV2ResourcesProperties(m.cgroups, dbusConnection)
+	properties, err := genV2ResourcesProperties(m.cgroups, m.dbus)
 	if err != nil {
 		return err
 	}
@@ -324,8 +311,7 @@ func (m *unifiedManager) Set(container *configs.Config) error {
 		}
 	}
 
-	if err := dbusConnection.SetUnitProperties(getUnitName(m.cgroups), true, properties...); err != nil {
-		m.dbus.checkAndReconnect(dbusConnection, err)
+	if err := setUnitProperties(m.dbus, getUnitName(m.cgroups), properties...); err != nil {
 		_ = m.Freeze(targetFreezerState)
 		return errors.Wrap(err, "error while setting unit properties")
 	}

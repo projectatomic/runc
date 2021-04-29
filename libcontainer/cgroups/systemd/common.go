@@ -310,9 +310,13 @@ func isUnitExists(err error) bool {
 	return isDbusError(err, "org.freedesktop.systemd1.UnitExists")
 }
 
-func startUnit(dbusConnection *systemdDbus.Conn, unitName string, properties []systemdDbus.Property) error {
+func startUnit(cm *dbusConnManager, unitName string, properties []systemdDbus.Property) error {
 	statusChan := make(chan string, 1)
-	if _, err := dbusConnection.StartTransientUnit(unitName, "replace", properties, statusChan); err == nil {
+	err := cm.retryOnDisconnect(func(c *systemdDbus.Conn) error {
+		_, err := c.StartTransientUnit(unitName, "replace", properties, statusChan)
+		return err
+	})
+	if err == nil {
 		timeout := time.NewTimer(30 * time.Second)
 		defer timeout.Stop()
 
@@ -321,11 +325,11 @@ func startUnit(dbusConnection *systemdDbus.Conn, unitName string, properties []s
 			close(statusChan)
 			// Please refer to https://godoc.org/github.com/coreos/go-systemd/dbus#Conn.StartUnit
 			if s != "done" {
-				dbusConnection.ResetFailedUnit(unitName)
+				resetFailedUnit(cm, unitName)
 				return errors.Errorf("error creating systemd unit `%s`: got `%s`", unitName, s)
 			}
 		case <-timeout.C:
-			dbusConnection.ResetFailedUnit(unitName)
+			resetFailedUnit(cm, unitName)
 			return errors.New("Timeout waiting for systemd to create " + unitName)
 		}
 	} else if !isUnitExists(err) {
@@ -335,9 +339,13 @@ func startUnit(dbusConnection *systemdDbus.Conn, unitName string, properties []s
 	return nil
 }
 
-func stopUnit(dbusConnection *systemdDbus.Conn, unitName string) error {
+func stopUnit(cm *dbusConnManager, unitName string) error {
 	statusChan := make(chan string, 1)
-	if _, err := dbusConnection.StopUnit(unitName, "replace", statusChan); err == nil {
+	err := cm.retryOnDisconnect(func(c *systemdDbus.Conn) error {
+		_, err := c.StopUnit(unitName, "replace", statusChan)
+		return err
+	})
+	if err == nil {
 		select {
 		case s := <-statusChan:
 			close(statusChan)
@@ -352,10 +360,30 @@ func stopUnit(dbusConnection *systemdDbus.Conn, unitName string) error {
 	return nil
 }
 
-func systemdVersion(conn *systemdDbus.Conn) int {
+func resetFailedUnit(cm *dbusConnManager, name string) {
+	err := cm.retryOnDisconnect(func(c *systemdDbus.Conn) error {
+		return c.ResetFailedUnit(name)
+	})
+	if err != nil {
+		logrus.Warnf("unable to reset failed unit: %v", err)
+	}
+}
+
+func setUnitProperties(cm *dbusConnManager, name string, properties ...systemdDbus.Property) error {
+	return cm.retryOnDisconnect(func(c *systemdDbus.Conn) error {
+		return c.SetUnitProperties(name, true, properties...)
+	})
+}
+
+func systemdVersion(cm *dbusConnManager) int {
 	versionOnce.Do(func() {
 		version = -1
-		verStr, err := conn.GetManagerProperty("Version")
+		var verStr string
+		err := cm.retryOnDisconnect(func(c *systemdDbus.Conn) error {
+			var err error
+			verStr, err = c.GetManagerProperty("Version")
+			return err
+		})
 		if err == nil {
 			version, err = systemdVersionAtoi(verStr)
 		}
@@ -383,10 +411,10 @@ func systemdVersionAtoi(verStr string) (int, error) {
 	return ver, errors.Wrapf(err, "can't parse version %s", verStr)
 }
 
-func addCpuQuota(conn *systemdDbus.Conn, properties *[]systemdDbus.Property, quota int64, period uint64) {
+func addCpuQuota(cm *dbusConnManager, properties *[]systemdDbus.Property, quota int64, period uint64) {
 	if period != 0 {
 		// systemd only supports CPUQuotaPeriodUSec since v242
-		sdVer := systemdVersion(conn)
+		sdVer := systemdVersion(cm)
 		if sdVer >= 242 {
 			*properties = append(*properties,
 				newProp("CPUQuotaPeriodUSec", period))
