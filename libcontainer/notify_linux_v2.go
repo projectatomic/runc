@@ -3,32 +3,15 @@
 package libcontainer
 
 import (
-	"io/ioutil"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"unsafe"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
+
+	"github.com/opencontainers/runc/libcontainer/cgroups/fscommon"
 )
-
-func getValueFromCgroup(path, key string) (int, error) {
-	content, err := ioutil.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		arr := strings.Split(line, " ")
-		if len(arr) == 2 && arr[0] == key {
-			return strconv.Atoi(arr[1])
-		}
-	}
-	return 0, nil
-}
 
 func registerMemoryEventV2(cgDir, evName, cgEvName string) (<-chan struct{}, error) {
 	eventControlPath := filepath.Join(cgDir, evName)
@@ -79,12 +62,12 @@ func registerMemoryEventV2(cgDir, evName, cgEvName string) (<-chan struct{}, err
 				}
 				switch int(rawEvent.Wd) {
 				case evFd:
-					oom, err := getValueFromCgroup(eventControlPath, "oom_kill")
+					oom, err := fscommon.GetValueByKey(cgDir, evName, "oom_kill")
 					if err != nil || oom > 0 {
 						ch <- struct{}{}
 					}
 				case cgFd:
-					pids, err := getValueFromCgroup(cgEvPath, "populated")
+					pids, err := fscommon.GetValueByKey(cgDir, cgEvName, "populated")
 					if err != nil || pids == 0 {
 						return
 					}
