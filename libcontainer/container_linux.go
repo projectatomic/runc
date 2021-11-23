@@ -5,6 +5,7 @@ package libcontainer
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -37,7 +38,7 @@ type linuxContainer struct {
 	cgroupManager        cgroups.Manager
 	initArgs             []string
 	initProcess          parentProcess
-	initProcessStartTime string
+	initProcessStartTime uint64
 	criuPath             string
 	m                    sync.Mutex
 	criuVersion          int
@@ -206,20 +207,74 @@ func (c *linuxContainer) Exec() error {
 
 func (c *linuxContainer) exec() error {
 	path := filepath.Join(c.root, execFifoFilename)
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return newSystemErrorWithCause(err, "open exec fifo for reading")
+	pid := c.initProcess.pid()
+	blockingFifoOpenCh := awaitFifoOpen(path)
+	for {
+		select {
+		case result := <-blockingFifoOpenCh:
+			return handleFifoResult(result)
+
+		case <-time.After(time.Millisecond * 100):
+			stat, err := system.Stat(pid)
+			if err != nil || stat.State == system.Zombie {
+				// could be because process started, ran, and completed between our 100ms timeout and our system.Stat() check.
+				// see if the fifo exists and has data (with a non-blocking open, which will succeed if the writing process is complete).
+				if err := handleFifoResult(fifoOpen(path, false)); err != nil {
+					return errors.New("container process is already dead")
+				}
+				return nil
+			}
+		}
 	}
-	defer f.Close()
-	data, err := ioutil.ReadAll(f)
+}
+
+func readFromExecFifo(execFifo io.Reader) error {
+	data, err := ioutil.ReadAll(execFifo)
 	if err != nil {
 		return err
 	}
-	if len(data) > 0 {
-		os.Remove(path)
-		return nil
+	if len(data) <= 0 {
+		return fmt.Errorf("cannot start an already running container")
 	}
-	return fmt.Errorf("cannot start an already running container")
+	return nil
+}
+
+func awaitFifoOpen(path string) <-chan openResult {
+	fifoOpened := make(chan openResult)
+	go func() {
+		result := fifoOpen(path, true)
+		fifoOpened <- result
+	}()
+	return fifoOpened
+}
+
+func fifoOpen(path string, block bool) openResult {
+	flags := os.O_RDONLY
+	if !block {
+		flags |= syscall.O_NONBLOCK
+	}
+	f, err := os.OpenFile(path, flags, 0)
+	if err != nil {
+		return openResult{err: newSystemErrorWithCause(err, "open exec fifo for reading")}
+	}
+	return openResult{file: f}
+}
+
+func handleFifoResult(result openResult) error {
+	if result.err != nil {
+		return result.err
+	}
+	f := result.file
+	defer f.Close()
+	if err := readFromExecFifo(f); err != nil {
+		return err
+	}
+	return os.Remove(f.Name())
+}
+
+type openResult struct {
+	file *os.File
+	err  error
 }
 
 func (c *linuxContainer) start(process *Process) error {
@@ -1112,40 +1167,17 @@ func (c *linuxContainer) refreshState() error {
 	return c.state.transition(&stoppedState{c: c})
 }
 
-// doesInitProcessExist checks if the init process is still the same process
-// as the initial one, it could happen that the original process has exited
-// and a new process has been created with the same pid, in this case, the
-// container would already be stopped.
-func (c *linuxContainer) doesInitProcessExist(initPid int) (bool, error) {
-	startTime, err := system.GetProcessStartTime(initPid)
-	if err != nil {
-		return false, newSystemErrorWithCausef(err, "getting init process %d start time", initPid)
-	}
-	if c.initProcessStartTime != startTime {
-		return false, nil
-	}
-	return true, nil
-}
-
 func (c *linuxContainer) runType() (Status, error) {
 	if c.initProcess == nil {
 		return Stopped, nil
 	}
 	pid := c.initProcess.pid()
-	// return Running if the init process is alive
-	if err := syscall.Kill(pid, 0); err != nil {
-		if err == syscall.ESRCH {
-			// It means the process does not exist anymore, could happen when the
-			// process exited just when we call the function, we should not return
-			// error in this case.
-			return Stopped, nil
-		}
-		return Stopped, newSystemErrorWithCausef(err, "sending signal 0 to pid %d", pid)
+	stat, err := system.Stat(pid)
+	if err != nil {
+		return Stopped, nil
 	}
-	// check if the process is still the original init process.
-	exist, err := c.doesInitProcessExist(pid)
-	if !exist || err != nil {
-		return Stopped, err
+	if stat.StartTime != c.initProcessStartTime || stat.State == system.Zombie || stat.State == system.Dead {
+		return Stopped, nil
 	}
 	// check if the process that is running is the init process or the user's process.
 	// this is the difference between the container Running and Created.
@@ -1174,7 +1206,7 @@ func (c *linuxContainer) isPaused() (bool, error) {
 
 func (c *linuxContainer) currentState() (*State, error) {
 	var (
-		startTime           string
+		startTime           uint64
 		externalDescriptors []string
 		pid                 = -1
 	)

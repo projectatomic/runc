@@ -33,7 +33,7 @@ type parentProcess interface {
 	wait() (*os.ProcessState, error)
 
 	// startTime returns the process start time.
-	startTime() (string, error)
+	startTime() (uint64, error)
 
 	signal(os.Signal) error
 
@@ -54,8 +54,9 @@ type setnsProcess struct {
 	rootDir       *os.File
 }
 
-func (p *setnsProcess) startTime() (string, error) {
-	return system.GetProcessStartTime(p.pid())
+func (p *setnsProcess) startTime() (uint64, error) {
+	stat, err := system.Stat(p.pid())
+	return stat.StartTime, err
 }
 
 func (p *setnsProcess) signal(sig os.Signal) error {
@@ -406,8 +407,9 @@ func (p *initProcess) terminate() error {
 	return err
 }
 
-func (p *initProcess) startTime() (string, error) {
-	return system.GetProcessStartTime(p.pid())
+func (p *initProcess) startTime() (uint64, error) {
+	stat, err := system.Stat(p.pid())
+	return stat.StartTime, err
 }
 
 func (p *initProcess) sendConfig() error {
