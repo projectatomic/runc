@@ -1015,13 +1015,27 @@ func SetupSeccomp(config *specs.LinuxSeccomp) (*configs.Seccomp, error) {
 		return nil, nil
 	}
 
-	// We don't currently support seccomp flags.
-	if len(config.Flags) != 0 {
-		return nil, errors.New("seccomp flags are not yet supported by runc")
-	}
-
 	newConfig := new(configs.Seccomp)
 	newConfig.Syscalls = []*configs.Syscall{}
+
+	// The list of flags defined in runtime-spec is a subset of the flags
+	// in the seccomp() syscall.
+	if config.Flags == nil {
+		// No flags are set explicitly (not even the empty set);
+		// set the default of specs.LinuxSeccompFlagSpecAllow,
+		// if it is supported by the libseccomp and the kernel.
+		if err := seccomp.FlagSupported(specs.LinuxSeccompFlagSpecAllow); err == nil {
+			newConfig.Flags = []specs.LinuxSeccompFlag{specs.LinuxSeccompFlagSpecAllow}
+		}
+	} else {
+		// Fail early if some flags are unknown or unsupported.
+		for _, flag := range config.Flags {
+			if err := seccomp.FlagSupported(flag); err != nil {
+				return nil, err
+			}
+			newConfig.Flags = append(newConfig.Flags, flag)
+		}
+	}
 
 	if len(config.Architectures) > 0 {
 		newConfig.Architectures = []string{}
