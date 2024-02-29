@@ -51,7 +51,6 @@ type setnsProcess struct {
 	fds           []string
 	process       *Process
 	bootstrapData io.Reader
-	rootDir       *os.File
 }
 
 func (p *setnsProcess) startTime() (uint64, error) {
@@ -71,7 +70,6 @@ func (p *setnsProcess) start() (err error) {
 	defer p.parentPipe.Close()
 	err = p.cmd.Start()
 	p.childPipe.Close()
-	p.rootDir.Close()
 	if err != nil {
 		return newSystemErrorWithCause(err, "starting setns process")
 	}
@@ -189,7 +187,6 @@ type initProcess struct {
 	process       *Process
 	bootstrapData io.Reader
 	sharePidns    bool
-	rootDir       *os.File
 }
 
 func (p *initProcess) pid() int {
@@ -234,7 +231,6 @@ func (p *initProcess) start() error {
 	err := p.cmd.Start()
 	p.process.ops = p
 	p.childPipe.Close()
-	p.rootDir.Close()
 	if err != nil {
 		p.process.ops = nil
 		return newSystemErrorWithCause(err, "starting init process command")

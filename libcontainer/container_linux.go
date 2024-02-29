@@ -27,6 +27,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/utils"
 	"github.com/syndtr/gocapability/capability"
 	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 )
 
 const stdioFdCount = 3
@@ -282,6 +283,15 @@ func (c *linuxContainer) start(process *Process) error {
 	if err != nil {
 		return newSystemErrorWithCause(err, "creating new parent process")
 	}
+	// Before starting "runc init", mark all non-stdio open files as O_CLOEXEC
+	// to make sure we don't leak any files into "runc init". Any files to be
+	// passed to "runc init" through ExtraFiles will get dup2'd by the Go
+	// runtime and thus their O_CLOEXEC flag will be cleared. This is some
+	// additional protection against attacks like CVE-2024-21626, by making
+	// sure we never leak files to "runc init" we didn't intend to.
+	if err := utils.CloseExecFrom(3); err != nil {
+		return newSystemErrorWithCause(err, "unable to mark non-stdio fds as cloexec")
+	}
 	if err := parent.start(); err != nil {
 		// terminate the process to ensure that it properly is reaped.
 		if err := parent.terminate(); err != nil {
@@ -335,26 +345,48 @@ func (c *linuxContainer) Signal(s os.Signal, all bool) error {
 	return nil
 }
 
+// includeExecFifo opens the container's execfifo as a pathfd, so that the
+// container cannot access the statedir (and the FIFO itself remains
+// un-opened). It then adds the FifoFd to the given exec.Cmd as an inherited
+// fd, with _LIBCONTAINER_FIFOFD set to its fd number.
+func (c *linuxContainer) includeExecFifo(cmd *exec.Cmd) error {
+	fifoName := filepath.Join(c.root, execFifoFilename)
+	fifoFd, err := unix.Open(fifoName, unix.O_PATH|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+
+	cmd.ExtraFiles = append(cmd.ExtraFiles, os.NewFile(uintptr(fifoFd), fifoName))
+	cmd.Env = append(cmd.Env,
+		fmt.Sprintf("_LIBCONTAINER_FIFOFD=%d", stdioFdCount+len(cmd.ExtraFiles)-1))
+	return nil
+}
+
 func (c *linuxContainer) newParentProcess(p *Process) (parentProcess, error) {
 	parentPipe, childPipe, err := newPipe()
 	if err != nil {
 		return nil, newSystemErrorWithCause(err, "creating new init pipe")
 	}
-	rootDir, err := os.Open(c.root)
-	if err != nil {
-		return nil, err
-	}
-	cmd, err := c.commandTemplate(p, childPipe, rootDir)
+	cmd, err := c.commandTemplate(p, childPipe)
 	if err != nil {
 		return nil, newSystemErrorWithCause(err, "creating new command template")
 	}
 	if !p.Init {
-		return c.newSetnsProcess(p, cmd, parentPipe, childPipe, rootDir)
+		return c.newSetnsProcess(p, cmd, parentPipe, childPipe)
 	}
-	return c.newInitProcess(p, cmd, parentPipe, childPipe, rootDir)
+
+	// We only set up fifoFd if we're not doing a `runc exec`. The historic
+	// reason for this is that previously we would pass a dirfd that allowed
+	// for container rootfs escape (and not doing it in `runc exec` avoided
+	// that problem), but we no longer do that. However, there's no need to do
+	// this for `runc exec` so we just keep it this way to be safe.
+	if err := c.includeExecFifo(cmd); err != nil {
+		return nil, newSystemErrorWithCause(err, "including execfifo in cmd.Exec setup")
+	}
+	return c.newInitProcess(p, cmd, parentPipe, childPipe)
 }
 
-func (c *linuxContainer) commandTemplate(p *Process, childPipe, rootDir *os.File) (*exec.Cmd, error) {
+func (c *linuxContainer) commandTemplate(p *Process, childPipe *os.File) (*exec.Cmd, error) {
 	cmd := exec.Command(c.initArgs[0], c.initArgs[1:]...)
 	cmd.Stdin = p.Stdin
 	cmd.Stdout = p.Stdout
@@ -363,10 +395,9 @@ func (c *linuxContainer) commandTemplate(p *Process, childPipe, rootDir *os.File
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	cmd.ExtraFiles = append(p.ExtraFiles, childPipe, rootDir)
+	cmd.ExtraFiles = append(p.ExtraFiles, childPipe)
 	cmd.Env = append(cmd.Env,
-		fmt.Sprintf("_LIBCONTAINER_INITPIPE=%d", stdioFdCount+len(cmd.ExtraFiles)-2),
-		fmt.Sprintf("_LIBCONTAINER_STATEDIR=%d", stdioFdCount+len(cmd.ExtraFiles)-1),
+		fmt.Sprintf("_LIBCONTAINER_INITPIPE=%d", stdioFdCount+len(cmd.ExtraFiles)-1),
 		fmt.Sprintf("_LIBCONTAINER_STATEDIR_PATH=%s", c.root),
 	)
 	// NOTE: when running a container with no PID namespace and the parent process spawning the container is
@@ -378,7 +409,7 @@ func (c *linuxContainer) commandTemplate(p *Process, childPipe, rootDir *os.File
 	return cmd, nil
 }
 
-func (c *linuxContainer) newInitProcess(p *Process, cmd *exec.Cmd, parentPipe, childPipe, rootDir *os.File) (*initProcess, error) {
+func (c *linuxContainer) newInitProcess(p *Process, cmd *exec.Cmd, parentPipe, childPipe *os.File) (*initProcess, error) {
 	cmd.Env = append(cmd.Env, "_LIBCONTAINER_INITTYPE="+string(initStandard))
 	nsMaps := make(map[configs.NamespaceType]string)
 	for _, ns := range c.config.Namespaces {
@@ -401,11 +432,10 @@ func (c *linuxContainer) newInitProcess(p *Process, cmd *exec.Cmd, parentPipe, c
 		process:       p,
 		bootstrapData: data,
 		sharePidns:    sharePidns,
-		rootDir:       rootDir,
 	}, nil
 }
 
-func (c *linuxContainer) newSetnsProcess(p *Process, cmd *exec.Cmd, parentPipe, childPipe, rootDir *os.File) (*setnsProcess, error) {
+func (c *linuxContainer) newSetnsProcess(p *Process, cmd *exec.Cmd, parentPipe, childPipe *os.File) (*setnsProcess, error) {
 	cmd.Env = append(cmd.Env, "_LIBCONTAINER_INITTYPE="+string(initSetns))
 	state, err := c.currentState()
 	if err != nil {
@@ -426,7 +456,6 @@ func (c *linuxContainer) newSetnsProcess(p *Process, cmd *exec.Cmd, parentPipe, 
 		config:        c.newInitConfig(p),
 		process:       p,
 		bootstrapData: data,
-		rootDir:       rootDir,
 	}, nil
 }
 

@@ -222,27 +222,32 @@ func (l *LinuxFactory) Type() string {
 // StartInitialization loads a container by opening the pipe fd from the parent to read the configuration and state
 // This is a low level implementation detail of the reexec and should not be consumed externally
 func (l *LinuxFactory) StartInitialization() (err error) {
-	var pipefd, rootfd int
-	for _, pair := range []struct {
-		k string
-		v *int
-	}{
-		{"_LIBCONTAINER_INITPIPE", &pipefd},
-		{"_LIBCONTAINER_STATEDIR", &rootfd},
-	} {
+	var (
+		pipefd, fifofd int
+		envInitPipe    = os.Getenv("_LIBCONTAINER_INITPIPE")
+		envFifoFd      = os.Getenv("_LIBCONTAINER_FIFOFD")
+	)
 
-		s := os.Getenv(pair.k)
-
-		i, err := strconv.Atoi(s)
-		if err != nil {
-			return fmt.Errorf("unable to convert %s=%s to int", pair.k, s)
-		}
-		*pair.v = i
+	// Get the INITPIPE.
+	pipefd, err = strconv.Atoi(envInitPipe)
+	if err != nil {
+		return fmt.Errorf("unable to convert _LIBCONTAINER_INITPIPE=%s to int: %s", envInitPipe, err)
 	}
+
 	var (
 		pipe = os.NewFile(uintptr(pipefd), "pipe")
 		it   = initType(os.Getenv("_LIBCONTAINER_INITTYPE"))
 	)
+	defer pipe.Close()
+
+	// Only init processes have FIFOFD.
+	fifofd = -1
+	if it == initStandard {
+		if fifofd, err = strconv.Atoi(envFifoFd); err != nil {
+			return fmt.Errorf("unable to convert _LIBCONTAINER_FIFOFD=%s to int: %s", envFifoFd, err)
+		}
+	}
+
 	// clear the current process's environment to clean any libcontainer
 	// specific env vars.
 	os.Clearenv()
@@ -251,8 +256,6 @@ func (l *LinuxFactory) StartInitialization() (err error) {
 	defer func() {
 		// We have an error during the initialization of the container's init,
 		// send it back to the parent process in the form of an initError.
-		// If container's init successed, syscall.Exec will not return, hence
-		// this defer function will never be called.
 		if _, ok := i.(*linuxStandardInit); ok {
 			//  Synchronisation only necessary for standard init.
 			if werr := utils.WriteJSON(pipe, syncT{procError}); werr != nil {
@@ -264,18 +267,19 @@ func (l *LinuxFactory) StartInitialization() (err error) {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
-		// ensure that this pipe is always closed
-		pipe.Close()
 	}()
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("panic from initialization: %v, %v", e, string(debug.Stack()))
 		}
 	}()
-	i, err = newContainerInit(it, pipe, rootfd)
+
+	i, err = newContainerInit(it, pipe, fifofd)
 	if err != nil {
 		return err
 	}
+
+	// If Init succeeds, syscall.Exec will not return, hence none of the defers will be called.
 	return i.Init()
 }
 
