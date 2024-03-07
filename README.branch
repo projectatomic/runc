@@ -1,0 +1,7 @@
+This branch is to be used solely for runc/libcontainer vendored
+by https://github.com/containers/podman/tree/v4.2.0-rhel
+
+Currently it contains runc branched off upstream commit 8b9452f75cbc
+(because podman needs https://github.com/opencontainers/runc/pull/3508
+which was never backported to a stable release), plus the backport of
+CVE-2024-21626 fixes.
