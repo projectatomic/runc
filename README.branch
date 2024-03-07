@@ -1,0 +1,9 @@
+This branch is to be used solely for runc/libcontainer vendored
+by https://github.com/containers/podman/tree/v4.0-rhel
+
+Currently it contains runc v1.1.2, plus the backport of CVE-2024-21626 fixes.
+
+The reason why the above branch of podman can't bump runc/libcontainer
+vendoring to v1.1.12 is it requires Go 1.17+ (because of
+https://github.com/opencontainers/runc/commit/55462355d69)
+while podman is being built with Go 1.16.
